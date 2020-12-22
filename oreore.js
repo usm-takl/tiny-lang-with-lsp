@@ -143,20 +143,62 @@ function sendMethodNotFoundResponse(id, method) {
 
 const requestTable = {};
 const notificationTable = {};
+const tokenTypeToIndex = {};
 let publishDiagnosticsCapable = false;
 
 requestTable["initialize"] = (msg) => {
+    const capabilities = {
+        textDocumentSync: 1
+    };
+
     if (msg.params && msg.params.capabilities) {
         if (msg.params.capabilities.textDocument && msg.params.capabilities.textDocument.publishDiagnostics) {
             publishDiagnosticsCapable = true;
         }
+        if (msg.params.capabilities.textDocument && msg.params.capabilities.textDocument.semanticTokens && msg.params.capabilities.textDocument.semanticTokens.tokenTypes) {
+            const tokenTypes = msg.params.capabilities.textDocument.semanticTokens.tokenTypes;
+            for (const i in tokenTypes) {
+                tokenTypeToIndex[tokenTypes[i]] = i;
+            }
+            capabilities.semanticTokensProvider = {
+                legend: {
+                    tokenTypes,
+                    tokenModifiers: []
+                },
+                range: false,
+                full: true
+            }
+        }
     }
 
-    const capabilities = {
-        textDocumentSync: 1,
-    };
-
     sendMessage({ jsonrpc: "2.0", id: msg.id, result: { capabilities } });
+}
+
+requestTable["textDocument/semanticTokens/full"] = (msg) => {
+    const uri = msg.params.textDocument.uri;
+    const data = [];
+    let line = 0;
+    let character = 0;
+
+    for (const token of buffers[uri].tokens) {
+        if (token.kind in tokenTypeToIndex) {
+            let d_line;
+            let d_char;
+            if (token.location.range.start.line === line) {
+                d_line = 0;
+                d_char = token.location.range.start.character - character;
+            } else {
+                d_line = token.location.range.start.line - line;
+                d_char = token.location.range.start.character;
+            }
+            line = token.location.range.start.line;
+            character = token.location.range.start.character;
+
+            data.push(d_line, d_char, token.text.length, tokenTypeToIndex[token.kind], 0);
+        }
+    }
+
+    sendMessage({ jsonrpc: "2.0", id: msg.id, result: { data } })
 }
 
 notificationTable["initialized"] = (msg) => {
