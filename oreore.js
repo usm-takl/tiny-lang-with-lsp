@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { getPriority } = require("os");
 
 function sendMessage(msg) {
     const s = new TextEncoder("utf-8").encode(JSON.stringify(msg));
@@ -71,8 +72,15 @@ function sendMethodNotFoundResponse(id, method) {
 
 const requestTable = {};
 const notificationTable = {};
+let publishDiagnosticsCapable = false;
 
 requestTable["initialize"] = (msg) => {
+    if (msg.params && msg.params.capabilities) {
+        if (msg.params.capabilities.textDocument && msg.params.capabilities.textDocument.publishDiagnostics) {
+            publishDiagnosticsCapable = true;
+        }
+    }
+
     const capabilities = {
         textDocumentSync: 1,
     };
@@ -84,8 +92,33 @@ notificationTable["initialized"] = (msg) => {
     logMessage("initialized!");
 }
 
+function sendPublishDiagnostics(uri, diagnostics) {
+    if (publishDiagnosticsCapable) {
+        sendMessage({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics } });
+    }
+}
+
 function compile(uri, src) {
-    logMessage(uri + ":" + src);
+    const diagnostics = [
+        {
+            range:
+            {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 5 }
+            },
+            message: "diagnostic message 1"
+        },
+        {
+            range:
+            {
+                start: { line: 1, character: 0 },
+                end: { line: 1, character: 5 }
+            },
+            message: "diagnostic message 2"
+        }
+    ];
+    sendPublishDiagnostics(uri, diagnostics)
+    
     // TODO: implement
 }
 
@@ -101,6 +134,11 @@ notificationTable["textDocument/didChange"] = (msg) => {
         const text = msg.params.contentChanges[msg.params.contentChanges.length - 1].text;
         compile(uri, text);
     }
+}
+
+notificationTable["textDocument/didClose"] = (msg) => {
+    const uri = msg.params.textDocument.uri;
+    sendPublishDiagnostics(uri, []);
 }
 
 function dispatch(msg) {
