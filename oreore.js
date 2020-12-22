@@ -695,6 +695,7 @@ requestTable["initialize"] = (msg) => {
     const capabilities = {
         textDocumentSync: 1,
         definitionProvider: true,
+        hoverProvider: true, // <---- ここ
         completionProvider: {}
     };
 
@@ -822,6 +823,17 @@ requestTable["textDocument/definition"] = (msg) => {
         sendMessage({ jsonrpc: "2.0", id: msg.id, result: null });
     } else {
         sendMessage({ jsonrpc: "2.0", id: msg.id, result: ast.definition.token.location });
+    }
+}
+
+requestTable["textDocument/hover"] = (msg) => {
+    const uri = msg.params.textDocument.uri;
+    const position = msg.params.position;
+    const ast = findAstOfPosition(uri, position);
+    if (!ast || !"type" in ast) {
+        sendMessage({ jsonrpc: "2.0", id: msg.id, result: null });
+    } else {
+        sendMessage({ jsonrpc: "2.0", id: msg.id, result: { contents: typeToString(ast.type) } });
     }
 }
 
