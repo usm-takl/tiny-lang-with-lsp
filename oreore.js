@@ -857,10 +857,87 @@ function dispatch(msg) {
     }
 }
 
+function evaluate() {
+    function evaluate1(ast, frame) {
+        switch (ast.kind) {
+            case "defun":
+                return null;
+            case "if":
+                if (evaluate1(ast.cond, frame)) {
+                    return evaluate1(ast.con, frame);
+                } else {
+                    return evaluate1(ast.alt, frame);
+                }
+            case "call":
+                {
+                    switch (ast.func.definition.kind) {
+                        case "subroutine":
+                            switch (ast.func.definition.ast.name) {
+                                case "print":
+                                    console.log(evaluate1(ast.args[0], frame));
+                                    return null;
+                                case "+":
+                                    return evaluate1(ast.args[0], frame) + evaluate1(ast.args[1], frame);
+                                case "-":
+                                    return evaluate1(ast.args[0], frame) - evaluate1(ast.args[1], frame);
+                                case "*":
+                                    return evaluate1(ast.args[0], frame) * evaluate1(ast.args[1], frame);
+                                case "=":
+                                    return evaluate1(ast.args[0], frame) === evaluate1(ast.args[1], frame);
+                                default:
+                                    console.log("not implemented: " + ast.func.definition.ast.name);
+                                    return null;
+                            }
+                        case "function":
+                            {
+                                const newFrame = {};
+                                for (let i = 0; i < ast.args.length; ++i) {
+                                    newFrame[ast.func.definition.ast.params[i].text] = evaluate1(ast.args[i], frame);
+                                }
+                                let v = null;
+                                for (const e of ast.func.definition.ast.body) {
+                                    v = evaluate1(e, newFrame);
+                                }
+                                return v;
+                            }
+                        default:
+                            console.log("error");
+                            return null;
+                    }
+                }
+            case "unit":
+                return null;
+            case "number":
+                return ast.value;
+            case "variable":
+                return frame[ast.text];
+            case "error":
+                console.log("error");
+                return null;
+        }
+    }
+
+    for (const ast of buffers[process.argv[2]].asts) {
+        evaluate1(ast);
+    }
+}
+
+function interpret(path) {
+    const src = fs.readFileSync(path).toString();
+    compile(path, src);
+    if (diagnostics.length === 0) {
+        evaluate(buffers[path].asts, null);
+    } else {
+        for (const d of diagnostics) {
+            console.log(`error:${path}:${d.range.start.line + 1}:${d.range.start.character + 1}: ${d.message}`);
+        }
+    }
+}
+
 if (process.argv.length !== 3) {
     console.log(`usage: ${process.argv[1]} [--language-server|FILE]`);
 } else if (process.argv[2] == "--language-server") {
     languageServer();
 } else {
-    // TODO: interpret(process.argv[2]);
+    interpret(process.argv[2]);
 }
