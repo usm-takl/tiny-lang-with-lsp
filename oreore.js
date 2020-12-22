@@ -519,6 +519,21 @@ function expand(pts) {
     return [asts, toplevelScope];
 }
 
+function typeToString(type) {
+    function deref(t) {
+        while (t && typeof t === "object" && "ref" in t) t = t.ref;
+        return t ? t : "unknown";
+    }
+    type = deref(type);
+    if (typeof type === "object" && "params" in type) {
+        const params = "(" + type.params.map(deref).join(", ") + ")";
+        const result = deref(type.result);
+        return params + " -> " + result;
+    } else {
+        return deref(type).toString();
+    }
+}
+
 function typing(asts) {
     function deref(t) {
         while (t.ref) t = t.ref;
