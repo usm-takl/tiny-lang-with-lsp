@@ -82,6 +82,59 @@ function tokenize(uri, str) {
     }
 }
 
+function rangeOfScope(scope) {
+    return { start: scope.firstToken.location.range.start, end: scope.lastToken.location.range.end };
+}
+
+function rangeOfAst(ast) {
+    return { start: ast.firstToken.location.range.start, end: ast.lastToken.location.range.end };
+}
+
+const globalScope = {
+    definitions: {
+        print: {
+            kind: "subroutine",
+            ast: {
+                kind: "subroutine",
+                name: "print",
+                type: { params: ["number"], result: "unit" }
+            }
+        },
+        "+": {
+            kind: "subroutine",
+            ast: {
+                kind: "subroutine",
+                name: "+",
+                type: { params: ["number", "number"], result: "number" }
+            }
+        },
+        "-": {
+            kind: "subroutine",
+            ast: {
+                kind: "subroutine",
+                name: "-",
+                type: { params: ["number", "number"], result: "number" }
+            }
+        },
+        "*": {
+            kind: "subroutine",
+            ast: {
+                kind: "subroutine",
+                name: "*",
+                type: { params: ["number", "number"], result: "number" }
+            }
+        },
+        "=": {
+            kind: "subroutine",
+            ast: {
+                kind: "subroutine",
+                name: "=",
+                type: { params: ["number", "number"], result: "bool" }
+            }
+        }
+    }
+}
+
 function parse(tokens) {
     const pts = [];
     let i = 0;
@@ -135,6 +188,267 @@ function parse(tokens) {
         if (tokens.length === i) return pts;
         pts.push(parse1());
     }
+}
+
+function expand(pts) {
+    const toplevelScope = {
+        definitions: {},
+        parent: globalScope,
+        children: []
+    };
+
+    function expandDefun(pt, scope) {
+        pt.data[0].firstToken.kind = "keyword";
+
+        if (pt.data.length < 3) { // (defun), (defun x), etc.
+            diagnostics.push({
+                range: rangeOfAst(pt),
+                message: "malformed defun"
+            });
+            return { kind: "error", type: "error", firstToken: pt.firstToken, lastToken: pt.lastToken }
+        }
+        if (pt.data[1].kind !== "variable") { // (defun 0.1 ...) etc.
+            diagnostics.push({
+                range: rangeOfAst(pt.data[1]),
+                message: "A variable is expected"
+            });
+            return { kind: "error", type: "error", firstToken: pt.data[1].firstToken, lastToken: pt.data[1].lastToken }
+        }
+        pt.data[1].firstToken.kind = "function";
+        if (pt.data[2].kind !== "array") { // (defun x 1.1 ...) etc.
+            diagnostics.push({
+                range: rangeOfAst(pt.data[2]),
+                message: "An array of variables is expected"
+            });
+            return { kind: "error", type: "error", firstToken: pt.firstToken, lastToken: pt.lastToken }
+        }
+
+        const newScope = {
+            definitions: {},
+            parent: scope,
+            children: [],
+            firstToken: pt.data.length === 3 ? pt.lastToken : pt.data[3].firstToken,
+            lastToken: pt.lastToken
+        };
+        scope.children.push(newScope);
+
+        const params2 = [];
+        for (const param of pt.data[2].data) {
+            if (param.kind !== "variable") { // (defun x (1.0 ...) ...) etc.
+                diagnostics.push({
+                    range: rangeOfAst(param),
+                    message: "A variable is expected"
+                });    
+                return { kind: "error", type: "error", firstToken: param.firstToken, lastToken: param.lastToken, text: "malformed defun" }
+            }
+
+            const param2 = {
+                kind: "variable",
+                type: { ref: null },
+                firstToken: param.firstToken,
+                lastToken: param.lastToken,
+                text: param.text
+            };
+            if (param.firstToken.text in newScope.definitions) {
+                diagnostics.push({
+                    range: rangeOfAst(param),
+                    message: "multiple definition"
+                });
+            }
+            newScope.definitions[param.firstToken.text] = {
+                kind: "parameter",
+                token: param.firstToken,
+                ast: param2
+            };
+            params2.push(param2);
+        }
+        
+        const funcName = pt.data[1].text;
+        scope.definitions[funcName] = {
+            kind: "function",
+            token: pt.data[1].firstToken,
+            type:  {
+                params: params2.map(p => p.type),
+                result: { ref: null }
+            },
+            ast: null
+        };
+        scope.definitions[funcName].ast = {
+            kind: "defun",
+            type: "syntax",
+            firstToken: pt.firstToken,
+            lastToken: pt.lastToken,
+            name: {
+                kind: "variable",
+                type: scope.definitions[funcName].type,
+                firstToken: pt.data[1].firstToken,
+                lastToken: pt.data[1].lastToken,
+                text: pt.data[1].text
+            },
+            params: params2,
+            body: pt.data.slice(3).map(pt => expand1(pt, newScope))
+        }
+        return scope.definitions[funcName].ast;
+    }
+    
+    function expandIf(pt, scope) {
+        pt.data[0].firstToken.kind = "keyword";
+
+        if (pt.data.length !== 4) {
+            diagnostics.push({
+                range: rangeOfAst(pt),
+                message: "malformed if"
+            });
+            return {
+                kind: "error",
+                type: "error",
+                firstToken: pt.firstToken,
+                lastToken: pt.lastToken,
+                text: "malformed if"
+            }
+        }
+        const cond = expand1(pt.data[1], scope);
+        const con = expand1(pt.data[2], scope);
+        const alt = expand1(pt.data[3], scope);
+        return {
+            kind: "if",
+            type: { ref: null },
+            firstToken: pt.firstToken,
+            lastToken: pt.lastToken,
+            cond,
+            con,
+            alt
+        };
+    }
+
+    function findDefinition(scope, name) {
+        if (name in scope.definitions) {
+            return scope.definitions[name];
+        }
+        if (scope.parent) {
+            return findDefinition(scope.parent, name);
+        }
+        return null;
+    }
+
+    function expandCall(pt, scope) {
+        pt.data[0].firstToken.kind = "function";
+        const definition = findDefinition(scope, pt.data[0].text);
+
+        let type;
+        if (!definition) {
+            diagnostics.push({
+                range: rangeOfAst(pt.data[0]),
+                message: "undefined variable"
+            });
+            type = {
+                params: [...Array(pt.data.length - 1)].map(_ => ({ ref: null })),
+                result: { ref: null }
+            };
+        } else if (definition.kind === "subroutine") {
+            type = definition.ast.type;
+        } else if (definition.kind === "function") {
+            type = definition.type;
+        } else {
+            diagnostics.push({
+                range: rangeOfAst(pt.data[0]),
+                message: "A function is expected"
+            });
+            type = {
+                params: [...Array(pt.data.length - 1)].map(_ => "error"),
+                result: "error"
+            }
+        }
+
+        return {
+            kind: "call",
+            type: type.result,
+            firstToken: pt.firstToken,
+            lastToken: pt.lastToken,
+            func: {
+                kind: "variable",
+                type,
+                definition,
+                firstToken: pt.data[0].firstToken,
+                lastToken: pt.data[0].lastToken,
+                text: pt.text
+            },
+            args: pt.data.slice(1).map(pt => expand1(pt, scope))
+        }
+    }
+
+    function expand1(pt, scope) {
+        switch (pt.kind) {
+            case "array":
+                if (pt.data.length === 0) {
+                    return {
+                        kind: "unit",
+                        type: "unit",
+                        firstToken: pt.firstToken,
+                        lastToken: pt.lastToken
+                    }
+                } else if (pt.data[0].kind === "variable") {
+                    switch (pt.data[0].text) {
+                        case "defun":
+                            if (scope !== toplevelScope) {
+                                diagnostics.push({
+                                    range: rangeOfAst(pt),
+                                    message: "nested function is not allowed"
+                                });
+                            }
+                            return expandDefun(pt, scope);
+                        case "if":
+                            return expandIf(pt, scope);
+                        default:
+                            return expandCall(pt, scope);
+                    }
+                } else {
+                    diagnostics.push({
+                        range: rangeOfAst(pt),
+                        message: "An operator must be an identifier"
+                    });
+                    return {
+                        kind: "call",
+                        type: "error",
+                        firstToken: pt.firstToken,
+                        lastToken:pt.lastToken,
+                        func: null,
+                        args: pt.data.map(pt => expand1(pt, scope))
+                    }
+                }
+            case "number":
+                return {
+                    kind: "number",
+                    type: "number",
+                    firstToken: pt.firstToken,
+                    lastToken: pt.lastToken,
+                    value: pt.value
+                };
+            case "variable":
+                {
+                    let definition = findDefinition(scope, pt.text);
+                    if (!definition) {
+                        diagnostics.push({
+                            range: rangeOfAst(pt),
+                            message: "undefined variable"
+                        });
+                    }
+                    return {
+                        kind: "variable",
+                        type: definition ? definition.ast.type : { ref: null },
+                        definition,
+                        firstToken: pt.firstToken,
+                        lastToken: pt.lastToken,
+                        text: pt.text
+                    };
+                }
+            case "error":
+                return pt;
+        }
+    }
+    
+    const asts = pts.map(pt => expand1(pt, toplevelScope));
+    return [asts, toplevelScope];
 }
 
 function sendErrorResponse(id, code, message) {
@@ -270,7 +584,8 @@ function compile(uri, src) {
     diagnostics.length = 0;
     const tokens = tokenize(uri, src);
     const pts = parse(tokens.filter(t => t.kind !== "comment"));
-    buffers[uri] = { tokens };
+    const [asts, toplevelScope] = expand(pts);
+    buffers[uri] = { tokens, toplevelScope, asts };
 }
 
 notificationTable["textDocument/didOpen"] = (msg) => {
