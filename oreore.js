@@ -82,6 +82,61 @@ function tokenize(uri, str) {
     }
 }
 
+function parse(tokens) {
+    const pts = [];
+    let i = 0;
+
+    function parse1() {
+        switch (tokens[i].kind) {
+            case "(":
+                {
+                    const data = [];
+                    const firstToken = tokens[i++];
+                    while (true) {
+                        if (tokens.length === i) {
+                            diagnostics.push({
+                                range: firstToken.location.range,
+                                message: "unclosed parenthesis"
+                            });
+                            break;
+                        } else if (tokens[i].kind === ")") {
+                            ++i;
+                            break;
+                        } else {
+                            data.push(parse1());
+                        }
+                    }
+                    const lastToken = tokens[i - 1];
+                    return { kind: "array", firstToken, lastToken, data };
+                }
+            case ")":
+                {
+                    const token = tokens[i++];
+                    diagnostics.push({
+                        range: token.location.range,
+                        message: "extra close parenthesis"
+                    });
+                    return { kind: "error", firstToken: token, lastToken: token };
+                }
+            case "number":
+                {
+                    const token = tokens[i++];
+                    return { kind: "number", firstToken: token, lastToken: token, value: Number(token.text) };
+                }
+            case "variable":
+                {
+                    const token = tokens[i++];
+                    return { kind: "variable", firstToken: token, lastToken: token, text: token.text };
+                }
+        }
+    }
+
+    while (true) {
+        if (tokens.length === i) return pts;
+        pts.push(parse1());
+    }
+}
+
 function sendErrorResponse(id, code, message) {
     sendMessage({ jsonrpc: "2.0", id, error: { code, message }});
 }
@@ -119,7 +174,7 @@ function languageServer() {
 
         try {
             const msg = JSON.parse(buffer.slice(headerLength, headerLength + contentLength));
-            dispatch(msg); // 後述
+            dispatch(msg);
         } catch (e) {
             if (e instanceof SyntaxError) {
                 sendParseErrorResponse();
@@ -214,6 +269,7 @@ function sendPublishDiagnostics(uri, diagnostics) {
 function compile(uri, src) {
     diagnostics.length = 0;
     const tokens = tokenize(uri, src);
+    const pts = parse(tokens.filter(t => t.kind !== "comment"));
     buffers[uri] = { tokens };
 }
 
