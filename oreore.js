@@ -519,6 +519,99 @@ function expand(pts) {
     return [asts, toplevelScope];
 }
 
+function typing(asts) {
+    function deref(t) {
+        while (t.ref) t = t.ref;
+        return t;
+    }
+
+    function unify(lhs, rhs, rhsRange) {
+        const lhs2 = deref(lhs);
+        const rhs2 = deref(rhs);
+
+        if (lhs === rhs) return;
+        if (lhs === "error" || rhs === "error") return;
+
+        if (typeof lhs2 === "object" && "ref" in lhs2 && !lhs2.ref) {
+            lhs2.ref = rhs2;
+        } else if (typeof rhs2 === "object" && "ref" in rhs2 && !rhs2.ref) {
+            rhs2.ref = lhs2;
+        } else if (lhs2 !== rhs2) {
+            diagnostics.push({
+                range: rhsRange,
+                message: typeToString(lhs) + " is expected"
+            });
+        }
+    }
+
+    function typing1(ast) {
+        switch (ast.kind) {
+            case "defun":
+                {
+                    let lastBody = null;
+                    for (const body of ast.body) {
+                        typing1(body);
+                        lastBody = body;
+                    }
+
+                    if (lastBody) {
+                        unify(ast.name.type.result, lastBody.type, rangeOfAst(lastBody));
+                    }
+                }
+                return;
+            case "if":
+                typing1(ast.cond);
+                typing1(ast.con);
+                typing1(ast.alt);
+                unify("bool", ast.cond.type, rangeOfAst(ast.cond));
+                unify(ast.con.type, ast.alt.type, rangeOfAst(ast.alt));
+                unify(ast.type, ast.con.type, rangeOfAst(ast.con));
+                return;
+            case "call":
+                if (ast.func) {
+                    const t = deref(ast.func.type);
+                    if (t.result) {
+                        unify(ast.type, t.result, rangeOfAst(ast.func));
+                    }
+                }
+
+                for (const arg of ast.args) {
+                    typing1(arg);
+                }
+
+                if (ast.func) {
+                    const params = deref(ast.func.type).params;
+                    if (params) {
+                        if (params.length !== ast.args.length) {
+                            diagnostics.push({
+                                range: rangeOfAst(ast),
+                                message: "wrong number of arguments"
+                            });
+                        }
+                        const length = Math.min(params.length, ast.args.length);
+                        for (let i = 0; i < length; ++i) {
+                            unify(params[i], ast.args[i].type, rangeOfAst(ast.args[i]));
+                        }
+                    }
+                }
+                return;
+            case "unit":
+                return;
+            case "number":
+                return;
+            case "variable":
+                return;
+            case "error":
+                return;
+            default:
+                throw new Error("unknown ast.kind: " + ast.kind);
+        }
+    }
+    for (const ast of asts) {
+        typing1(ast);
+    }
+}
+
 function sendErrorResponse(id, code, message) {
     sendMessage({ jsonrpc: "2.0", id, error: { code, message }});
 }
@@ -587,7 +680,7 @@ requestTable["initialize"] = (msg) => {
     const capabilities = {
         textDocumentSync: 1,
         definitionProvider: true,
-        completionProvider: {} // <---- ここ
+        completionProvider: {}
     };
 
     if (msg.params && msg.params.capabilities) {
@@ -680,6 +773,7 @@ function compile(uri, src) {
     const tokens = tokenize(uri, src);
     const pts = parse(tokens.filter(t => t.kind !== "comment"));
     const [asts, toplevelScope] = expand(pts);
+    typing(asts);
     buffers[uri] = { tokens, toplevelScope, asts };
 }
 
