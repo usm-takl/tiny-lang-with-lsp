@@ -90,6 +90,74 @@ function rangeOfAst(ast) {
     return { start: ast.firstToken.location.range.start, end: ast.lastToken.location.range.end };
 }
 
+function positionInRange(position, range) {
+    if (position.line < range.start.line) return false;
+    if (position.line === range.start.line && position.character < range.start.character) return false;
+    if (position.line > range.end.line) return false;
+    if (position.line === range.end.line && position.character >= range.end.character) return false;
+    return true;
+}
+
+function findAstOfPosition(uri, position) {
+    function f1(ast) {
+        if (!positionInRange(position, rangeOfAst(ast))) return null;
+
+        switch (ast.kind) {
+            case "defun":
+                if (ast.name) {
+                    const name = f1(ast.name);
+                    if (name) return name;
+                }
+                for (const param of ast.params) {
+                    const param2 = f1(param);
+                    if (param2) return param2;
+                }
+                for (const body of ast.body) {
+                    const body2 = f1(body);
+                    if (body2) return body2;
+                }
+                return ast;
+            case "if":
+                {
+                    const cond = f1(ast.cond);
+                    if (cond) return cond;
+                    const con = f1(ast.con);
+                    if (con) return con;
+                    const alt = f1(ast.alt);
+                    if (alt) return alt;
+                    return ast;
+                }
+            case "call":
+                if (ast.func) {
+                    const proc = f1(ast.func);
+                    if (proc) return proc;
+                }
+                for (const arg of ast.args) {
+                    const arg2 = f1(arg);
+                    if (arg2) return arg2;
+                }
+                return ast;
+            case "unit":
+                return ast;
+            case "number":
+                return ast;
+            case "variable":
+                return ast;
+            case "error":
+                return ast;
+            default:
+                throw new Error("unknown ast.kind: " + ast.kind);
+        }
+    }
+
+    for (const ast of buffers[uri].asts) {
+        const a = f1(ast);
+        if (a) return a;
+    }
+
+    return null;
+}
+
 const globalScope = {
     definitions: {
         print: {
@@ -517,7 +585,8 @@ let publishDiagnosticsCapable = false;
 
 requestTable["initialize"] = (msg) => {
     const capabilities = {
-        textDocumentSync: 1
+        textDocumentSync: 1,
+        definitionProvider: true
     };
 
     if (msg.params && msg.params.capabilities) {
@@ -607,6 +676,18 @@ notificationTable["textDocument/didChange"] = (msg) => {
 notificationTable["textDocument/didClose"] = (msg) => {
     const uri = msg.params.textDocument.uri;
     sendPublishDiagnostics(uri, []);
+}
+
+requestTable["textDocument/definition"] = (msg) => {
+    const uri = msg.params.textDocument.uri;
+    const position = msg.params.position;
+
+    const ast = findAstOfPosition(uri, position);
+    if (!ast || ast.kind !== "variable" || !ast.definition || !ast.definition.token) {
+        sendMessage({ jsonrpc: "2.0", id: msg.id, result: null });
+    } else {
+        sendMessage({ jsonrpc: "2.0", id: msg.id, result: ast.definition.token.location });
+    }
 }
 
 function dispatch(msg) {
