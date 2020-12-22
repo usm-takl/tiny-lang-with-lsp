@@ -1,5 +1,4 @@
 const fs = require("fs");
-const { getPriority } = require("os");
 
 function sendMessage(msg) {
     const s = new TextEncoder("utf-8").encode(JSON.stringify(msg));
@@ -9,6 +8,78 @@ function sendMessage(msg) {
 
 function logMessage(message) {
     sendMessage({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message } });
+}
+
+const buffers = {};
+const diagnostics = [];
+
+function tokenize(uri, str) {
+    let i = 0;
+    let line = 0;
+    let character = 0;
+    let tokens = [];
+
+    function nextChar() {
+        if (str.length === i) return;
+        if (str[i] === "\n") {
+            ++i;
+            ++line;
+            character = 0;
+        } else {
+            ++i;
+            ++character;
+        }
+    }
+
+    while (true) {
+        // skip leading whitespaces
+        while (true) {
+            if (str.length === i) return tokens;
+            if (" \t\r\n".indexOf(str[i]) === -1) break;
+            nextChar();
+        }
+
+        const start = { line, character };
+
+        let text;
+        let kind;
+        if (str[i] === "(") {
+            text = "(";
+            kind = "(";
+            nextChar();
+        } else if (str[i] === ")") {
+            text = ")";
+            kind = ")";
+            nextChar();
+        } else if (str[i] === ";") {
+            const begin = i;
+            while (true) {
+                if (str.length === i) break;
+                if (str[i] === "\n") break;
+                nextChar();
+            }
+            text = str.substring(begin, i);
+            kind = "comment";
+        } else {
+            const begin = i;
+            while (true) {
+                if (str.length === i) break;
+                if (" \t\r\n();".indexOf(str[i]) !== -1) break;
+                nextChar();
+            }
+            text = str.substring(begin, i);
+
+            if (!isNaN(Number(text))) {
+                kind = "number";
+            } else {
+                kind = "variable";
+            }
+        }
+
+        const end = { line, character };
+        const location = { uri, range: { start, end } };
+        tokens.push({ kind, text, location });
+    }
 }
 
 function sendErrorResponse(id, code, message) {
@@ -99,33 +170,16 @@ function sendPublishDiagnostics(uri, diagnostics) {
 }
 
 function compile(uri, src) {
-    const diagnostics = [
-        {
-            range:
-            {
-                start: { line: 0, character: 0 },
-                end: { line: 0, character: 5 }
-            },
-            message: "diagnostic message 1"
-        },
-        {
-            range:
-            {
-                start: { line: 1, character: 0 },
-                end: { line: 1, character: 5 }
-            },
-            message: "diagnostic message 2"
-        }
-    ];
-    sendPublishDiagnostics(uri, diagnostics)
-    
-    // TODO: implement
+    diagnostics.length = 0;
+    const tokens = tokenize(uri, src);
+    buffers[uri] = { tokens };
 }
 
 notificationTable["textDocument/didOpen"] = (msg) => {
     const uri = msg.params.textDocument.uri;
     const text = msg.params.textDocument.text;
     compile(uri, text);
+    sendPublishDiagnostics(uri, diagnostics);
 }
 
 notificationTable["textDocument/didChange"] = (msg) => {
@@ -133,6 +187,7 @@ notificationTable["textDocument/didChange"] = (msg) => {
         const uri = msg.params.textDocument.uri;
         const text = msg.params.contentChanges[msg.params.contentChanges.length - 1].text;
         compile(uri, text);
+        sendPublishDiagnostics(uri, diagnostics);
     }
 }
 
