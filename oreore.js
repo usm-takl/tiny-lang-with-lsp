@@ -586,7 +586,8 @@ let publishDiagnosticsCapable = false;
 requestTable["initialize"] = (msg) => {
     const capabilities = {
         textDocumentSync: 1,
-        definitionProvider: true
+        definitionProvider: true,
+        completionProvider: {} // <---- ここ
     };
 
     if (msg.params && msg.params.capabilities) {
@@ -637,6 +638,31 @@ requestTable["textDocument/semanticTokens/full"] = (msg) => {
     }
 
     sendMessage({ jsonrpc: "2.0", id: msg.id, result: { data } })
+}
+
+requestTable["textDocument/completion"] = (msg) => {
+    const uri = msg.params.textDocument.uri;
+    const position = msg.params.position;
+    const toplevelScope = buffers[uri].toplevelScope;
+    const result = [];
+
+    for (const name in globalScope.definitions) {
+        result.push({ label: name });
+    }
+
+    for (const name in toplevelScope.definitions) {
+        result.push({ label: name });
+    }
+
+    for (const localScope of toplevelScope.children) {
+        if (positionInRange(position, rangeOfScope(localScope))) {
+            for (const name in localScope.definitions) {
+                result.push({ label: name });
+            }
+        }
+    }
+
+    sendMessage({ jsonrpc: "2.0", id: msg.id, result });
 }
 
 notificationTable["initialized"] = (msg) => {
