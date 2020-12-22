@@ -1,0 +1,28 @@
+{
+  "name": "oreore-mode",
+  "version": "0.0.1",
+  "author": "usm-takl",
+  "license": "MIT",
+  "description": "A tiny programming language that supports Language Server Protocol",
+  "engines": {
+    "vscode": "^1.52.1"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:oreore"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "oreore",
+        "extensions": [
+          ".ore"
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^7.0.0"
+  },
+  "private": true
+}

@@ -1,0 +1,27 @@
+(defun succ (x) ; comment
+  (+ x 1))
+(print (succ 3)) ; => 4
+
+(defun 🍣 (🐟 🍚) ; 🦐🦀🐙🦑
+  (+ 🐟 🍚))
+(print (🍣 1 2)) ; => 3
+
+(defun fact (n)
+  (if (= n 0)
+      1
+      (* n (fact (- n 1)))))
+(print (fact 5)) ; => 120
+
+(defun fibo (n)
+  (if (= n 0)
+      0
+      (if (= n 1)
+          1
+          (+ (fibo (- n 1))
+             (fibo (- n 2))))))
+(print (fibo 1)) ; => 1
+(print (fibo 2)) ; => 1
+(print (fibo 3)) ; => 2
+(print (fibo 4)) ; => 3
+(print (fibo 5)) ; => 5
+(print (fibo 6)) ; => 8
