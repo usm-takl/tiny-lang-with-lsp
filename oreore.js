@@ -678,8 +678,8 @@ function languageServer() {
     });
 }
 
-function sendInvalidRequestResponse() {
-    sendErrorResponse(null, -32600, "received an invalid request");
+function sendInvalidRequestResponse(id) {
+    sendErrorResponse(id, -32600, "received an invalid request");
 }
 
 function sendMethodNotFoundResponse(id, method) {
@@ -695,7 +695,7 @@ requestTable["initialize"] = (msg) => {
     const capabilities = {
         textDocumentSync: 1,
         definitionProvider: true,
-        hoverProvider: true, // <---- ここ
+        hoverProvider: true,
         completionProvider: {}
     };
 
@@ -774,10 +774,6 @@ requestTable["textDocument/completion"] = (msg) => {
     sendMessage({ jsonrpc: "2.0", id: msg.id, result });
 }
 
-notificationTable["initialized"] = (msg) => {
-    logMessage("initialized!");
-}
-
 function sendPublishDiagnostics(uri, diagnostics) {
     if (publishDiagnosticsCapable) {
         sendMessage({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics } });
@@ -837,9 +833,21 @@ requestTable["textDocument/hover"] = (msg) => {
     }
 }
 
+requestTable["shutdown"] = (msg) => {
+    sendMessage({ jsonrpc: "2.0", id: msg.id, result: null });
+}
+
+let afterInitialize = false;
+let afterShutdown = false;
+
 function dispatch(msg) {
     if ("id" in msg && "method" in msg) { // request
-        if (msg.method in requestTable) {
+        if (msg.method === "initialize") afterInitialize = true;
+        if (afterShutdown) {
+            sendInvalidRequestResponse(msg.id);
+        } else if (!afterInitialize) {
+            sendMessage({ jsonrpc: "2.0", id: msg.id, error: { code: -32002, message: "a request arrived before initialize" } });
+        } else if (msg.method in requestTable) {
             requestTable[msg.method](msg);
         } else {
             sendMethodNotFoundResponse(msg.id, msg.method)
@@ -849,11 +857,15 @@ function dispatch(msg) {
         // This language server doesn't send any request.
         // If this language server receives a response, that is invalid.
     } else if ("method" in msg) { // notification
-        if (msg.method in notificationTable) {
+        if (msg.method === "exit") process.exit(afterShutdown ? 0 : 1);
+
+        if (afterShutdown) return;
+
+        if (afterInitialize && msg.method in notificationTable) {
             notificationTable[msg.method](msg);
         }
     } else { // error
-        sendInvalidRequestResponse();
+        sendInvalidRequestResponse(null);
     }
 }
 
