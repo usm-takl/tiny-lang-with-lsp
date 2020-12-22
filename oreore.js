@@ -73,8 +73,11 @@ const requestTable = {};
 const notificationTable = {};
 
 requestTable["initialize"] = (msg) => {
-    logMessage("initialize");
-    // TODO: implement
+    sendMessage({ jsonrpc: "2.0", id: msg.id, result: { capabilities: {} } });
+}
+
+notificationTable["initialized"] = (msg) => {
+    logMessage("initialized!");
 }
 
 function dispatch(msg) {
